@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物理学 波と音響のシミュレーション</title>
+    <meta name="description" content="波の基本から気柱、ヘルムホルツ共鳴腔までをインタラクティブに学べる物理シミュレーション">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- MathJax for rendering math equations -->
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+    <div class="app-wrapper">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2 12C2 12 5 4 12 4C19 4 22 12 22 12C22 12 19 20 12 20C5 20 2 12 2 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                <h2>WaveSim Pro</h2>
+            </div>
+            
+            <ul class="nav-links">
+                <li data-mode="fundamental" class="active">
+                    <span class="icon">〰️</span> 波の基本とグラフ
+                </li>
+                <li data-mode="reflection">
+                    <span class="icon">↹</span> 反射と定常波
+                </li>
+                <li data-mode="aircolumn">
+                    <span class="icon">🎵</span> 気柱 (開管・閉管)
+                </li>
+                <li data-mode="helmholtz">
+                    <span class="icon">🏺</span> ヘルムホルツ共鳴腔
+                </li>
+            </ul>
+
+            <div class="audio-control card-glass">
+                <p class="audio-status">Audio Engine: <span class="status-indicator off">Off</span></p>
+                <button id="btn-toggle-sound" class="btn primary">
+                    <span class="icon" id="sound-icon">🔇</span> 
+                    <span id="sound-text">Play Sound</span>
+                </button>
+                <div class="audio-volume-row">
+                    <label class="audio-volume-label">🔊 音量</label>
+                    <input type="range" id="slider-volume" class="custom-slider volume-slider" min="0" max="100" step="1" value="50">
+                    <span class="val-badge volume-badge"><span id="val-volume">50</span>%</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Workspace -->
+        <main class="main-workspace">
+            <header class="top-header">
+                <div>
+                    <h1 id="mode-title">波の基本とグラフ</h1>
+                    <p id="mode-subtitle" class="text-muted">縦波・横波の視覚化と、y-x / y-t グラフでの正弦波の理解</p>
+                </div>
+                <div class="formula-container card-glass" id="formula-display">
+                    $$ y(x,t) = A \sin \left( 2\pi ft - \frac{2\pi x}{\lambda} \right) $$
+                </div>
+            </header>
+            
+            <div class="canvas-wrapper card-glass">
+                <canvas id="sim-canvas"></canvas>
+                <!-- Playback Controls Overlay -->
+                <div class="playback-controls" id="playback-controls">
+                    <button class="pb-btn" id="btn-step-back" title="1フレーム戻る">⏮</button>
+                    <button class="pb-btn pb-btn-main" id="btn-play-pause" title="再生/一時停止">⏸</button>
+                    <button class="pb-btn" id="btn-step-forward" title="1フレーム進める">⏭</button>
+                    <div class="pb-speed">
+                        <label class="pb-speed-label">速度</label>
+                        <input type="range" id="slider-speed-mult" class="pb-slider" min="0.25" max="4" step="0.25" value="1">
+                        <span class="pb-speed-val" id="val-speed-mult">×1.0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-time Calculation Panel -->
+            <section class="calc-panel card-glass" id="calc-panel">
+                <h3 class="calc-panel-title">📊 リアルタイム計算値</h3>
+                <div class="calc-grid" id="calc-grid">
+                    <!-- Populated dynamically -->
+                </div>
+            </section>
+
+            <!-- Dynamic Controls Panel -->
+            <section class="controls-panel card-glass" id="controls-panel">
+
+
+                <div class="tab-content active" id="tab-sim" style="display:block;">
+                    <div class="controls-grid" id="controls-grid">
+                        <!-- General Controls (Present in most modes) -->
+                        <div class="control-block">
+                            <div class="label-row">
+                                <label>振幅 (Amplitude)</label>
+                                <span class="val-badge"><span id="val-amp">1.0</span> m</span>
+                            </div>
+                            <input type="range" id="slider-amp" class="custom-slider" min="0.1" max="2.0" step="0.1" value="1.0">
+                        </div>
+                        
+                        <div class="control-block">
+                            <div class="label-row">
+                                <label>周波数 (Frequency)</label>
+                                <span class="val-badge"><span id="val-freq">440</span> Hz</span>
+                            </div>
+                            <input type="range" id="slider-freq" class="custom-slider" min="110" max="880" step="1" value="440">
+                        </div>
+                        
+                        <div class="control-block">
+                            <div class="label-row">
+                                <label>波の速さ (Speed)</label>
+                                <span class="val-badge"><span id="val-speed">340</span> m/s</span>
+                            </div>
+                            <input type="range" id="slider-speed" class="custom-slider" min="100" max="600" step="10" value="340">
+                        </div>
+                    </div>
+                </div>
+
+
+            </section>
+        </main>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
