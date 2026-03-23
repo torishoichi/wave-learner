@@ -604,12 +604,18 @@ function drawDoubleArrow(x1, y1, x2, y2, label, color) {
 function drawFundamental(w, h) {
     const amp = state.params.amp * (h / 4);
 
-    // Use a visual wavelength that shows ~3 full waves on screen
-    const lambda_vis = w * 0.3;
+    // Map physical screen width to 4.0 meters
+    const physicalLength = 4.0;
+    const pixelsPerMeter = w / physicalLength;
+
+    // Calculate wavelength based on actual speed and frequency: λ = v / f
+    const lambda_phys = state.params.speed / state.params.freq;
+    const lambda_vis = lambda_phys * pixelsPerMeter;
     const visualK = (2 * Math.PI) / lambda_vis;
 
-    // Visual animation speed (not tied to real audio freq)
-    const omega_vis = 2 * Math.PI * 0.4;
+    // Scale animation speed, with 440 Hz as a baseline "pleasing visual speed"
+    const baseFreq = 440;
+    const omega_vis = 2 * Math.PI * 0.4 * (state.params.freq / baseFreq);
     const t = state.params.time * omega_vis;
 
     if (state.params.viewType === 'y-x') {
