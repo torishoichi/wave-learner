@@ -19,6 +19,7 @@ const state = {
         tractSections: 4,
         tractAreas: [1.0, 1.0, 1.0, 1.0], // Default cross sections cm^2
         tractLength: 17.0, // Default length in cm
+        f0: 120, // Glottal source fundamental frequency
         
         // Derived or selected visualization params
         viewType: 'y-x', // 'transverse', 'longitudinal', 'y-x', 'y-t'
@@ -455,12 +456,19 @@ function buildDynamicControls() {
                     <div class="radio-btn" data-vowel="o">オ [o]</div>
                 </div>
             </div>
-            <div class="control-block dynamic-ctrl" style="grid-column: span 2;">
+            <div class="control-block dynamic-ctrl" style="grid-column: span 1;">
                 <div class="label-row">
                     <label>声道長 L (cm)</label>
                     <span class="val-badge"><span id="val-tractLength">${state.params.tractLength.toFixed(1)}</span></span>
                 </div>
                 <input type="range" id="slider-tractLength" class="custom-slider" min="10.0" max="25.0" step="0.5" value="${state.params.tractLength}">
+            </div>
+            <div class="control-block dynamic-ctrl" style="grid-column: span 1;">
+                <div class="label-row">
+                    <label>基本周波数 F0 (Hz)</label>
+                    <span class="val-badge"><span id="val-f0">${state.params.f0.toFixed(0)}</span></span>
+                </div>
+                <input type="range" id="slider-f0" class="custom-slider" min="50" max="400" step="5" value="${state.params.f0}">
             </div>
             ${slidersHtml}
         `;
@@ -498,6 +506,13 @@ function buildDynamicControls() {
         document.getElementById('slider-tractLength').addEventListener('input', (e) => {
             state.params.tractLength = parseFloat(e.target.value);
             document.getElementById('val-tractLength').innerText = state.params.tractLength.toFixed(1);
+            updateFormulaDisplay();
+            updateCalcPanel();
+        });
+        
+        document.getElementById('slider-f0').addEventListener('input', (e) => {
+            state.params.f0 = parseFloat(e.target.value);
+            document.getElementById('val-f0').innerText = state.params.f0.toFixed(0);
             updateFormulaDisplay();
             updateCalcPanel();
         });
@@ -593,8 +608,8 @@ function updateCalcPanel() {
             rs.push(r.toFixed(2));
         }
         items = [
+            { symbol: 'F₀', label: '基本周波数', value: state.params.f0.toFixed(0), unit: 'Hz' },
             { symbol: 'F₁', label: '第1フォルマント', value: f.toFixed(1), unit: 'Hz' },
-            { symbol: 'λ', label: '基本波長', value: (lambda * 100).toFixed(1), unit: 'cm' },
             { symbol: 'L', label: '声道長', value: state.params.tractLength.toFixed(1), unit: 'cm' },
             { symbol: 'r₁', label: '反射(1-2)', value: rs[0] || "0", unit: '' },
             { symbol: 'r₂', label: '反射(2-3)', value: rs[1] || "0", unit: '' },
@@ -661,7 +676,7 @@ async function toggleAudio() {
             
             state.audio.scriptNode.onaudioprocess = function(e) {
                 const output = e.outputBuffer.getChannelData(0);
-                const freq = calcCurrentFrequency(); 
+                const freq = state.params.f0; 
                 const phaseInc = 2 * Math.PI * freq / sampleRate;
                 
                 const r = new Float32Array(sections - 1);
@@ -1455,8 +1470,8 @@ function drawVocalTract(w, h) {
     
     // Waveguide physics step
     if (!state.isPaused && dt > 0) {
-        // Base frequency of glottal source
-        const freq = calcCurrentFrequency();
+        // Base frequency of glottal source (F0)
+        const freq = state.params.f0;
         const ptsPerSection = Math.floor(N / sections);
         
         // Simulation speed parameter (adjust so waves look visible but fast enough)
@@ -1473,8 +1488,17 @@ function drawVocalTract(w, h) {
             
             // Glottal source (Excitation) at x = 0
             vt.sourcePhase += 2 * Math.PI * freq * dtSim;
-            // Simplistic glottal pulse approximation (or sine wave)
-            let inputSignal = state.params.amp * Math.sin(vt.sourcePhase);
+            if (vt.sourcePhase >= 2 * Math.PI) vt.sourcePhase -= 2 * Math.PI;
+            
+            // Glottal pulse approximation (LF-like):
+            const nPhase = vt.sourcePhase / Math.PI; // 0 to 2
+            let source = 0;
+            if (nPhase < 1.0) {
+                source = 0.5 * (1.0 - Math.cos(nPhase * Math.PI)); // Gradual opening
+            } else {
+                source = Math.max(0, 1.0 - (nPhase - 1.0) * 5.0); // Fast closing
+            }
+            let inputSignal = (source - 0.5) * state.params.amp; // center around 0
             // Glottis reflects like a mostly closed end (r ~ 0.9)
             newPlus[0] = inputSignal + 0.9 * vt.pMinus[0]; 
             
@@ -1516,7 +1540,7 @@ function drawVocalTract(w, h) {
     // --- Visualization ---
     const startX = w * 0.05;
     const drawW = w * 0.9;
-    const centerY = h / 2;
+    const centerY = h * 0.25; // Upper quarter/half for tube
     
     // Draw the Tube Shape (Area function)
     const ptsPerSec = drawW / sections;
@@ -1524,7 +1548,7 @@ function drawVocalTract(w, h) {
     // Find max area for scaling
     let maxA = 0.1;
     for(let a of state.params.tractAreas) if(a > maxA) maxA = a;
-    const maxTubeH = h * 0.4;
+    const maxTubeH = h * 0.3;
     
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
@@ -1593,6 +1617,93 @@ function drawVocalTract(w, h) {
     ctx.textAlign = 'left';
     ctx.fillText('← 唇 (Lips)', startX + drawW + 10, centerY);
     ctx.restore();
+
+    // --- Spectrum Visualization ---
+    const specTop = h * 0.55;
+    const specH = h * 0.35;
+    const maxFreq = 4000; // Display up to 4 kHz
+    
+    // Draw axes
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(startX, specTop);
+    ctx.lineTo(startX, specTop + specH);
+    ctx.lineTo(startX + drawW, specTop + specH);
+    ctx.stroke();
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = '11px Inter';
+    ctx.textAlign = 'center';
+    for (let f_lbl = 1000; f_lbl <= maxFreq; f_lbl += 1000) {
+        const lx = startX + (f_lbl / maxFreq) * drawW;
+        ctx.fillText(f_lbl + 'Hz', lx, specTop + specH + 15);
+    }
+    
+    // Draw Formant Envelope (Transfer Function)
+    ctx.beginPath();
+    const freqSteps = Math.floor(drawW);
+    let maxEnvLevel = 0;
+    const envCurve = new Float32Array(freqSteps);
+    
+    // Calculate gain curve
+    for (let i = 0; i < freqSteps; i++) {
+        const f_sim = (i / freqSteps) * maxFreq;
+        const gain = getTractGain(f_sim, state.params.tractAreas, state.params.tractLength, state.params.speed);
+        const logGain = Math.log10(gain + 1e-5);
+        envCurve[i] = logGain;
+        if (logGain > maxEnvLevel) maxEnvLevel = logGain;
+    }
+    
+    let minEnvLevel = maxEnvLevel - 3.0; // Dynamic range ~60dB
+    
+    ctx.beginPath();
+    for (let i = 0; i < freqSteps; i++) {
+        const x = startX + i;
+        let norm = (envCurve[i] - minEnvLevel) / (maxEnvLevel - minEnvLevel);
+        norm = Math.max(0, Math.min(1, norm));
+        const y = specTop + specH - norm * specH * 0.9;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(168, 85, 247, 0.8)'; // Purple curve
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    ctx.fillStyle = 'rgba(168, 85, 247, 0.8)';
+    ctx.textAlign = 'left';
+    ctx.fillText('声道伝達特性 (Filter)', startX + 10, specTop + 15);
+    
+    // Draw Source Harmonics (Line spectrum)
+    const f0 = state.params.f0;
+    const numHarmonics = Math.floor(maxFreq / f0);
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)'; // Blue
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    
+    for (let k = 1; k <= numHarmonics; k++) {
+        const hFreq = k * f0;
+        const hx = startX + (hFreq / maxFreq) * drawW;
+        
+        // Intensity fall-off ~ 1/k
+        const sourceLevel = 1.0 - (Math.log10(k) / Math.log10(numHarmonics)) * 0.8; 
+        
+        const stepIdx = Math.floor((hFreq / maxFreq) * freqSteps);
+        const filterVal = (stepIdx >= 0 && stepIdx < freqSteps) ? envCurve[stepIdx] : minEnvLevel;
+        let gainNorm = (filterVal - minEnvLevel) / (maxEnvLevel - minEnvLevel);
+        gainNorm = Math.max(0, Math.min(1, gainNorm));
+        
+        const outNorm = gainNorm * sourceLevel;
+        const barH = outNorm * specH * 0.9;
+        
+        ctx.moveTo(hx, specTop + specH);
+        ctx.lineTo(hx, specTop + specH - barH);
+    }
+    ctx.stroke();
+    
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.8)';
+    ctx.textAlign = 'right';
+    ctx.fillText('出力スペクトル (Source × Filter)', startX + drawW - 10, specTop + 15);
 }
 
 function renderFrame() {
