@@ -541,3 +541,115 @@ canvas {
     margin-left: 3px;
     font-weight: 400;
 }
+
+/* ===== Responsive Layout (Mobile / Smartphone) ===== */
+@media (max-width: 768px) {
+    body {
+        height: auto;
+        overflow-y: auto;
+    }
+
+    .app-wrapper {
+        flex-direction: column;
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .sidebar {
+        width: 100%;
+        padding: 12px 16px;
+        flex-direction: column;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .logo {
+        margin-bottom: 16px;
+        justify-content: center;
+    }
+
+    .nav-links {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 8px;
+        padding-bottom: 8px;
+        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+    }
+
+    .nav-links li {
+        margin-bottom: 0;
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 10px 14px;
+        font-size: 13px;
+    }
+
+    .audio-control {
+        margin-top: 12px;
+        padding: 12px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .audio-status {
+        width: 100%;
+        margin-bottom: 4px;
+    }
+
+    .audio-volume-row {
+        flex: 1;
+        min-width: 150px;
+    }
+
+    .btn {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .main-workspace {
+        padding: 16px;
+        gap: 16px;
+    }
+
+    .top-header {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    #mode-title {
+        font-size: 22px;
+    }
+
+    .formula-container {
+        width: 100%;
+        padding: 12px;
+        font-size: 1em;
+        overflow-x: auto;
+        min-width: auto;
+    }
+
+    .canvas-wrapper {
+        min-height: 300px;
+        max-height: 40vh;
+    }
+
+    .playback-controls {
+        bottom: 8px;
+        right: 8px;
+        padding: 6px 10px;
+        transform: scale(0.9);
+        transform-origin: bottom right;
+    }
+
+    .controls-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .calc-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
