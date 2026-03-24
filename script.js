@@ -168,7 +168,65 @@ function calcCurrentFrequency() {
         const L_eff = state.params.neckLength; // should actually be L + 0.6r etc, simplifying for now
         return (v / (2 * Math.PI)) * Math.sqrt(A / (V * L_eff));
     }
+    // For Vocal Tract, compute first formant F1 based on tube geometry
+    else if (state.mode === 'vocaltract') {
+        return findF1();
+    }
     return 440;
+}
+
+// --- New acoustic calculation functions ---
+function getTractGain(f, areas, L_total, c) {
+    const k = 2 * Math.PI * f / c;
+    const sections = areas.length;
+    const l = (L_total / 100) / sections;
+    
+    let p_re = 0, p_im = 0; // p_out = 0 (open lips)
+    let U_re = 1, U_im = 0; // U_out = 1
+    
+    for (let i = sections - 1; i >= 0; i--) {
+        const A = areas[i];
+        const Z_c = 1.0 / A;
+        
+        const cos_kl = Math.cos(k * l);
+        const sin_kl = Math.sin(k * l);
+        
+        const next_p_re = p_re * cos_kl - U_im * Z_c * sin_kl;
+        const next_p_im = p_im * cos_kl + U_re * Z_c * sin_kl;
+        
+        const next_U_re = -(p_im / Z_c) * sin_kl + U_re * cos_kl;
+        const next_U_im = (p_re / Z_c) * sin_kl + U_im * cos_kl;
+        
+        p_re = next_p_re;
+        p_im = next_p_im;
+        U_re = next_U_re;
+        U_im = next_U_im;
+    }
+    
+    const U_in_mag = Math.sqrt(U_re*U_re + U_im*U_im);
+    return 1.0 / (U_in_mag + 1e-10);
+}
+
+// Cache F1 to avoid calculating it on every frame unless parameters changed
+let lastF1Params = "";
+let cachedF1 = 500;
+function findF1() {
+    const paramsStr = `${state.params.tractLength}_${state.params.speed}_${state.params.tractAreas.join(',')}`;
+    if (paramsStr === lastF1Params) return cachedF1;
+    
+    let maxGain = -1;
+    let bestF = 500;
+    for (let f = 100; f <= 1500; f += 2) {
+        const gain = getTractGain(f, state.params.tractAreas, state.params.tractLength, state.params.speed);
+        if (gain > maxGain) {
+            maxGain = gain;
+            bestF = f;
+        }
+    }
+    
+    lastF1Params = paramsStr;
+    cachedF1 = bestF;
+    return bestF;
 }
 
 function setMode(newMode) {
@@ -535,11 +593,12 @@ function updateCalcPanel() {
             rs.push(r.toFixed(2));
         }
         items = [
-            { symbol: 'v', label: '音速', value: v.toFixed(0), unit: 'm/s' },
+            { symbol: 'F₁', label: '第1フォルマント', value: f.toFixed(1), unit: 'Hz' },
+            { symbol: 'λ', label: '基本波長', value: (lambda * 100).toFixed(1), unit: 'cm' },
             { symbol: 'L', label: '声道長', value: state.params.tractLength.toFixed(1), unit: 'cm' },
-            { symbol: 'r₁', label: '反射係数(1-2)', value: rs[0] || "0", unit: '' },
-            { symbol: 'r₂', label: '反射係数(2-3)', value: rs[1] || "0", unit: '' },
-            { symbol: 'r₃', label: '反射係数(3-4)', value: rs[2] || "0", unit: '' },
+            { symbol: 'r₁', label: '反射(1-2)', value: rs[0] || "0", unit: '' },
+            { symbol: 'r₂', label: '反射(2-3)', value: rs[1] || "0", unit: '' },
+            { symbol: 'r₃', label: '反射(3-4)', value: rs[2] || "0", unit: '' },
         ];
     }
     
@@ -1383,6 +1442,7 @@ function drawVocalTract(w, h) {
         state.vocalTract = {
             pPlus: new Float32Array(N),
             pMinus: new Float32Array(N),
+            envelope: new Float32Array(N),
             sourcePhase: 0,
             lastTime: state.params.time
         };
@@ -1445,6 +1505,10 @@ function drawVocalTract(w, h) {
             for(let i=0; i<N; i++) {
                 vt.pPlus[i] = newPlus[i] * 0.999;
                 vt.pMinus[i] = newMinus[i] * 0.999;
+                
+                // Track envelope
+                const pressure = vt.pPlus[i] + vt.pMinus[i];
+                vt.envelope[i] = Math.max(vt.envelope[i] * 0.995, Math.abs(pressure));
             }
         }
     }
@@ -1483,21 +1547,39 @@ function drawVocalTract(w, h) {
         ctx.fillText(`A${sec+1}`, secX + ptsPerSec/2, centerY - tubeH/2 - 10);
     }
     
-    // Draw the pressure wave
+    // Draw the envelope (standing wave)
     ctx.beginPath();
     for (let i = 0; i < N; i++) {
         const px = startX + (i / (N-1)) * drawW;
-        // Total pressure p = p+ + p-
+        const env = vt.envelope[i] * 25;
+        if (i === 0) ctx.moveTo(px, centerY - env);
+        else ctx.lineTo(px, centerY - env);
+    }
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+        const px = startX + (i / (N-1)) * drawW;
+        const env = vt.envelope[i] * 25;
+        if (i === 0) ctx.moveTo(px, centerY + env);
+        else ctx.lineTo(px, centerY + env);
+    }
+    ctx.stroke();
+
+    // Draw the instantaneous pressure wave
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+        const px = startX + (i / (N-1)) * drawW;
         const pressure = vt.pPlus[i] + vt.pMinus[i];
-        
-        // Scale pressure to pixels
         const py = centerY - pressure * 25; 
         
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
     }
     ctx.strokeStyle = '#facc15'; // Yellow wave
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     
     // Annotations: Glottis & Lips
