@@ -15,6 +15,11 @@ const state = {
         neckArea: 0.0005, // m^2
         neckLength: 0.05, // m
         
+        // Vocal Tract / Concatenated Tube params
+        tractSections: 4,
+        tractAreas: [1.0, 1.0, 1.0, 1.0], // Default cross sections cm^2
+        tractLength: 17.0, // Default length in cm
+        
         // Derived or selected visualization params
         viewType: 'y-x', // 'transverse', 'longitudinal', 'y-x', 'y-t'
         reflectionView: 'super', // 'super', 'parts'
@@ -25,12 +30,14 @@ const state = {
         ctx: null,
         oscillator: null,
         gainNode: null,
+        scriptNode: null,
         isPlaying: false,
         volume: 0.5
     },
     animationFrameId: null,
     isPaused: false,
-    playbackSpeed: 1.0
+    playbackSpeed: 1.0,
+    vocalTract: null // will be initialized holding pPlus and pMinus
 };
 
 // ---------- DOM Elements ----------
@@ -183,6 +190,10 @@ function setMode(newMode) {
             titleEl.textContent = 'ヘルムホルツ共鳴腔';
             subtitleEl.textContent = '体積、首の長さ・面積に基づく共鳴周波数の計算と音響モデル';
             // In Helmholtz, general frequency slider isn't the driver, we calculate freq from dims.
+            break;
+        case 'vocaltract':
+            titleEl.textContent = '連結管モデル (声道)';
+            subtitleEl.textContent = '断面積の異なる管の境界における波の反射・透過による共鳴の形成';
             break;
     }
     buildDynamicControls();
@@ -362,6 +373,86 @@ function buildDynamicControls() {
             updateParam('neckLength', val, null);
             document.getElementById('val-neckLength').innerText = (val * 100).toFixed(1);
         });
+    } else if (state.mode === 'vocaltract') {
+        let slidersHtml = '';
+        for (let i = 0; i < state.params.tractSections; i++) {
+            slidersHtml += `
+                <div class="control-block dynamic-ctrl" style="grid-column: span 1;">
+                    <div class="label-row">
+                        <label>管 ${i+1} 面積 (cm²)</label>
+                        <span class="val-badge"><span id="val-tractArea-${i}">${state.params.tractAreas[i].toFixed(1)}</span></span>
+                    </div>
+                    <input type="range" id="slider-tractArea-${i}" class="custom-slider" min="0.1" max="10.0" step="0.1" value="${state.params.tractAreas[i]}" data-idx="${i}">
+                </div>
+            `;
+        }
+        const html = `
+            <div class="control-block dynamic-ctrl" style="grid-column: span 2;">
+                <label>母音プリセット (Vowels)</label>
+                <div class="radio-group" id="radio-vowels">
+                    <div class="radio-btn" data-vowel="a">ア [a]</div>
+                    <div class="radio-btn" data-vowel="i">イ [i]</div>
+                    <div class="radio-btn" data-vowel="u">ウ [u]</div>
+                    <div class="radio-btn" data-vowel="e">エ [e]</div>
+                    <div class="radio-btn" data-vowel="o">オ [o]</div>
+                </div>
+            </div>
+            <div class="control-block dynamic-ctrl" style="grid-column: span 2;">
+                <div class="label-row">
+                    <label>声道長 L (cm)</label>
+                    <span class="val-badge"><span id="val-tractLength">${state.params.tractLength.toFixed(1)}</span></span>
+                </div>
+                <input type="range" id="slider-tractLength" class="custom-slider" min="10.0" max="25.0" step="0.5" value="${state.params.tractLength}">
+            </div>
+            ${slidersHtml}
+        `;
+        controlsGrid.insertAdjacentHTML('beforeend', html);
+        
+        document.querySelectorAll('#radio-vowels .radio-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const vowel = e.target.dataset.vowel;
+                const presets = {
+                    'a': [1.0, 2.0, 6.0, 10.0],
+                    'i': [9.0, 5.0, 1.0, 0.5],
+                    'u': [3.0, 7.0, 2.0, 0.5],
+                    'e': [4.0, 3.0, 5.0, 4.0],
+                    'o': [2.0, 7.0, 3.0, 1.0]
+                };
+                if (presets[vowel]) {
+                    document.querySelectorAll('#radio-vowels .radio-btn').forEach(b => b.classList.remove('active'));
+                    e.target.classList.add('active');
+                    
+                    for(let i=0; i<state.params.tractSections; i++) {
+                        if (i < presets[vowel].length) {
+                            state.params.tractAreas[i] = presets[vowel][i];
+                            const slider = document.getElementById(`slider-tractArea-${i}`);
+                            const valDisplay = document.getElementById(`val-tractArea-${i}`);
+                            if(slider) slider.value = presets[vowel][i];
+                            if(valDisplay) valDisplay.innerText = presets[vowel][i].toFixed(1);
+                        }
+                    }
+                    updateFormulaDisplay();
+                    updateCalcPanel();
+                }
+            });
+        });
+        
+        document.getElementById('slider-tractLength').addEventListener('input', (e) => {
+            state.params.tractLength = parseFloat(e.target.value);
+            document.getElementById('val-tractLength').innerText = state.params.tractLength.toFixed(1);
+            updateFormulaDisplay();
+            updateCalcPanel();
+        });
+        
+        for (let i = 0; i < state.params.tractSections; i++) {
+            document.getElementById(`slider-tractArea-${i}`).addEventListener('input', (e) => {
+                const idx = parseInt(e.target.dataset.idx);
+                state.params.tractAreas[idx] = parseFloat(e.target.value);
+                document.getElementById(`val-tractArea-${idx}`).innerText = state.params.tractAreas[idx].toFixed(1);
+                updateFormulaDisplay();
+                updateCalcPanel();
+            });
+        }
     }
 }
 
@@ -382,6 +473,8 @@ function updateFormulaDisplay() {
         }
     } else if (state.mode === 'helmholtz') {
         mathStr = `$$ f = \\frac{v}{2\\pi} \\sqrt{\\frac{A}{VL}} \\approx ${calcCurrentFrequency().toFixed(1)}\\text{ Hz} $$`;
+    } else if (state.mode === 'vocaltract') {
+        mathStr = `$$ r = \\frac{A_1 - A_2}{A_1 + A_2} \\quad \\text{(反射係数)} $$`;
     }
 
     formulaEl.innerHTML = mathStr;
@@ -433,6 +526,21 @@ function updateCalcPanel() {
             { symbol: 'L', label: '首の長さ', value: (Ln * 100).toFixed(1), unit: 'cm' },
             { symbol: 'v', label: '音速', value: v.toFixed(0), unit: 'm/s' },
         ];
+    } else if (state.mode === 'vocaltract') {
+        let rs = [];
+        for (let i=0; i < state.params.tractSections - 1; i++) {
+            const a1 = state.params.tractAreas[i];
+            const a2 = state.params.tractAreas[i+1];
+            const r = (a1 + a2) === 0 ? 0 : (a1 - a2) / (a1 + a2);
+            rs.push(r.toFixed(2));
+        }
+        items = [
+            { symbol: 'v', label: '音速', value: v.toFixed(0), unit: 'm/s' },
+            { symbol: 'L', label: '声道長', value: state.params.tractLength.toFixed(1), unit: 'cm' },
+            { symbol: 'r₁', label: '反射係数(1-2)', value: rs[0] || "0", unit: '' },
+            { symbol: 'r₂', label: '反射係数(2-3)', value: rs[1] || "0", unit: '' },
+            { symbol: 'r₃', label: '反射係数(3-4)', value: rs[2] || "0", unit: '' },
+        ];
     }
     
     // Build HTML
@@ -472,11 +580,117 @@ async function toggleAudio() {
     }
 
     if (!state.audio.isPlaying) {
-        state.audio.oscillator = state.audio.ctx.createOscillator();
-        state.audio.oscillator.type = 'sine';
-        state.audio.oscillator.frequency.value = calcCurrentFrequency();
-        state.audio.oscillator.connect(state.audio.gainNode);
-        state.audio.oscillator.start();
+        if (state.mode === 'vocaltract') {
+            const bufferSize = 1024;
+            const createProcessor = state.audio.ctx.createScriptProcessor || state.audio.ctx.createJavaScriptNode;
+            state.audio.scriptNode = createProcessor.call(state.audio.ctx, bufferSize, 1, 1);
+            
+            const sampleRate = state.audio.ctx.sampleRate;
+            const sections = state.params.tractSections;
+            const c = state.params.speed; 
+            
+            // To support varying tract lengths up to 30cm dynamically,
+            // we allocate a buffer large enough for max possible delay per section.
+            // 30cm / 4 sections = 7.5cm/section. Max delay = 0.075 / 340 * 48000 = ~10.6 samples.
+            // 64 is safely large enough.
+            const MAX_SECTION_DELAY = 64;
+            
+            const plusBufs = Array.from({length: sections}, () => new Float32Array(MAX_SECTION_DELAY));
+            const minusBufs = Array.from({length: sections}, () => new Float32Array(MAX_SECTION_DELAY));
+            let ptr = 0;
+            let phase = 0;
+            
+            state.audio.scriptNode.onaudioprocess = function(e) {
+                const output = e.outputBuffer.getChannelData(0);
+                const freq = calcCurrentFrequency(); 
+                const phaseInc = 2 * Math.PI * freq / sampleRate;
+                
+                const r = new Float32Array(sections - 1);
+                for (let i=0; i<sections-1; i++) {
+                    const A1 = state.params.tractAreas[i];
+                    const A2 = state.params.tractAreas[i+1];
+                    r[i] = (A1 + A2 === 0) ? 0 : (A1 - A2) / (A1 + A2);
+                }
+                
+                // Calculate dynamic fractional delay
+                const currentTractL = state.params.tractLength / 100; // m
+                const actualDelay = (currentTractL / sections) / state.params.speed * sampleRate;
+                let dInt = Math.floor(actualDelay);
+                let dFrac = actualDelay - dInt;
+                
+                // Safety bound
+                if (dInt < 1) dInt = 1;
+                if (dInt >= MAX_SECTION_DELAY - 1) dInt = MAX_SECTION_DELAY - 2;
+                
+                for (let i = 0; i < bufferSize; i++) {
+                    phase += phaseInc;
+                    if(phase >= 2*Math.PI) phase -= 2*Math.PI;
+                    
+                    // Pseudo-glottal pulse (LF-like approximation): open slowly, close fast
+                    const nPhase = phase / Math.PI; // 0 to 2
+                    let source = 0;
+                    if (nPhase < 1.0) {
+                        source = 0.5 * (1.0 - Math.cos(nPhase * Math.PI)); // Gradual opening
+                    } else {
+                        source = Math.max(0, 1.0 - (nPhase - 1.0) * 5.0); // Fast closing snapping shut
+                    }
+                    source = (source - 0.5) * state.params.amp; // center around 0
+                    
+                    const pUp = new Float32Array(sections);
+                    const pDown = new Float32Array(sections);
+                    
+                    // Fractional delay reading using linear interpolation
+                    const readPtr1 = (ptr + dInt) % MAX_SECTION_DELAY;
+                    const readPtr2 = (ptr + dInt + 1) % MAX_SECTION_DELAY;
+                    
+                    for(let s=0; s<sections; s++) {
+                        const up1 = plusBufs[s][readPtr1];
+                        const up2 = plusBufs[s][readPtr2];
+                        pUp[s] = up1 * (1 - dFrac) + up2 * dFrac;
+                        
+                        const down1 = minusBufs[s][readPtr1];
+                        const down2 = minusBufs[s][readPtr2];
+                        pDown[s] = down1 * (1 - dFrac) + down2 * dFrac;
+                    }
+                    
+                    // Boundary scatterings
+                    const inPlus = source + 0.9 * pDown[0]; // Glottis reflection
+                    const inMinus = -0.9 * pUp[sections-1]; // Lips reflection
+                    
+                    const scatteredPlus = new Float32Array(sections);
+                    const scatteredMinus = new Float32Array(sections);
+                    
+                    scatteredPlus[0] = inPlus;
+                    scatteredMinus[sections-1] = inMinus;
+                    
+                    for (let s = 0; s < sections - 1; s++) {
+                        scatteredPlus[s+1] = (1 + r[s]) * pUp[s] - r[s] * pDown[s+1];
+                        scatteredMinus[s] = r[s] * pUp[s] + (1 - r[s]) * pDown[s+1];
+                    }
+                    
+                    // Attrition (simulate wall loss)
+                    const attenuation = 0.999;
+                    
+                    // Retreat pointer
+                    ptr = (ptr === 0) ? MAX_SECTION_DELAY - 1 : ptr - 1;
+                    
+                    for (let s=0; s<sections; s++) {
+                        plusBufs[s][ptr] = scatteredPlus[s] * attenuation;
+                        minusBufs[s][ptr] = scatteredMinus[s] * attenuation;
+                    }
+                    
+                    output[i] = pUp[sections-1] * 0.5;
+                }
+            };
+            
+            state.audio.scriptNode.connect(state.audio.gainNode);
+        } else {
+            state.audio.oscillator = state.audio.ctx.createOscillator();
+            state.audio.oscillator.type = 'sine';
+            state.audio.oscillator.frequency.value = calcCurrentFrequency();
+            state.audio.oscillator.connect(state.audio.gainNode);
+            state.audio.oscillator.start();
+        }
         
         // Envelope Attack (fade in to avoid click)
         state.audio.gainNode.gain.setTargetAtTime(state.audio.volume, state.audio.ctx.currentTime, 0.05);
@@ -498,6 +712,10 @@ async function toggleAudio() {
                 state.audio.oscillator.stop();
                 state.audio.oscillator.disconnect();
                 state.audio.oscillator = null;
+            }
+            if (state.audio.scriptNode) {
+                state.audio.scriptNode.disconnect();
+                state.audio.scriptNode = null;
             }
         }, 100); // Wait for fade out
         
@@ -1157,6 +1375,144 @@ function drawHelmholtz(w, h) {
     ctx.restore();
 }
 
+function drawVocalTract(w, h) {
+    const sections = state.params.tractSections;
+    const N = 200; // Resolution of simulation
+    
+    if (!state.vocalTract) {
+        state.vocalTract = {
+            pPlus: new Float32Array(N),
+            pMinus: new Float32Array(N),
+            sourcePhase: 0,
+            lastTime: state.params.time
+        };
+    }
+    const vt = state.vocalTract;
+    
+    // Calculate physics steps based on delta time
+    const dt = Math.max(0, state.params.time - vt.lastTime);
+    vt.lastTime = state.params.time;
+    
+    // Waveguide physics step
+    if (!state.isPaused && dt > 0) {
+        // Base frequency of glottal source
+        const freq = calcCurrentFrequency();
+        const ptsPerSection = Math.floor(N / sections);
+        
+        // Simulation speed parameter (adjust so waves look visible but fast enough)
+        // dt is in seconds, simulated wavespeed c
+        const c = state.params.speed; 
+        const waveSpeedFactor = 2.0; 
+        const simSteps = Math.min(20, Math.floor((dt * c * waveSpeedFactor) / (state.params.tractLength / 100 / N) + 1));
+        
+        const dtSim = dt / simSteps;
+        
+        for (let s = 0; s < simSteps; s++) {
+            const newPlus = new Float32Array(N);
+            const newMinus = new Float32Array(N);
+            
+            // Glottal source (Excitation) at x = 0
+            vt.sourcePhase += 2 * Math.PI * freq * dtSim;
+            // Simplistic glottal pulse approximation (or sine wave)
+            let inputSignal = state.params.amp * Math.sin(vt.sourcePhase);
+            // Glottis reflects like a mostly closed end (r ~ 0.9)
+            newPlus[0] = inputSignal + 0.9 * vt.pMinus[0]; 
+            
+            // Lips at x = N-1 (Radiation)
+            // Lips reflect like an open end (r ~ -0.9, inverts pressure)
+            newMinus[N-1] = -0.9 * vt.pPlus[N-1];
+            
+            // Propagation
+            for (let i = 1; i < N; i++) newPlus[i] = vt.pPlus[i-1];
+            for (let i = 0; i < N-1; i++) newMinus[i] = vt.pMinus[i+1];
+            
+            // Junction Scattering
+            for (let sec = 0; sec < sections - 1; sec++) {
+                const junctionIdx = (sec + 1) * ptsPerSection;
+                const A1 = state.params.tractAreas[sec];
+                const A2 = state.params.tractAreas[sec + 1];
+                const r = (A1 + A2 === 0) ? 0 : (A1 - A2) / (A1 + A2);
+                
+                const pUp = vt.pPlus[junctionIdx-1];
+                const pDown = vt.pMinus[junctionIdx];
+                
+                // Scattering equations for pressure waves
+                newPlus[junctionIdx] = (1 + r) * pUp - r * pDown;
+                newMinus[junctionIdx-1] = r * pUp + (1 - r) * pDown;
+            }
+            
+            // Tiny attenuation to keep things stable
+            for(let i=0; i<N; i++) {
+                vt.pPlus[i] = newPlus[i] * 0.999;
+                vt.pMinus[i] = newMinus[i] * 0.999;
+            }
+        }
+    }
+
+    // --- Visualization ---
+    const startX = w * 0.05;
+    const drawW = w * 0.9;
+    const centerY = h / 2;
+    
+    // Draw the Tube Shape (Area function)
+    const ptsPerSec = drawW / sections;
+    
+    // Find max area for scaling
+    let maxA = 0.1;
+    for(let a of state.params.tractAreas) if(a > maxA) maxA = a;
+    const maxTubeH = h * 0.4;
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 2;
+    
+    for (let sec = 0; sec < sections; sec++) {
+        const A = state.params.tractAreas[sec];
+        const tubeH = (A / maxA) * maxTubeH;
+        const secX = startX + sec * ptsPerSec;
+        
+        ctx.beginPath();
+        ctx.rect(secX + 1, centerY - tubeH / 2, ptsPerSec - 2, tubeH);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Label inside tube
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = '12px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText(`A${sec+1}`, secX + ptsPerSec/2, centerY - tubeH/2 - 10);
+    }
+    
+    // Draw the pressure wave
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+        const px = startX + (i / (N-1)) * drawW;
+        // Total pressure p = p+ + p-
+        const pressure = vt.pPlus[i] + vt.pMinus[i];
+        
+        // Scale pressure to pixels
+        const py = centerY - pressure * 25; 
+        
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = '#facc15'; // Yellow wave
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    // Annotations: Glottis & Lips
+    ctx.save();
+    ctx.fillStyle = '#ef4444';
+    ctx.font = '14px Inter';
+    ctx.textAlign = 'right';
+    ctx.fillText('声帯 (Glottis) →', startX - 10, centerY);
+    
+    ctx.fillStyle = '#10b981';
+    ctx.textAlign = 'left';
+    ctx.fillText('← 唇 (Lips)', startX + drawW + 10, centerY);
+    ctx.restore();
+}
+
 function renderFrame() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const w = canvas.width;
@@ -1177,6 +1533,8 @@ function renderFrame() {
         drawAirColumn(w, h);
     } else if (state.mode === 'helmholtz') {
         drawHelmholtz(w, h);
+    } else if (state.mode === 'vocaltract') {
+        drawVocalTract(w, h);
     }
 }
 
